@@ -11,8 +11,14 @@ public static class SyncEndpoints
     {
         var group = app.MapGroup("/api/sync").RequireAuthorization();
 
-        group.MapPost("/sessions/syncFull", SyncAllSessionsAsync);
-        group.MapPost("/sessions/{sessionId:guid}/solves", SyncSessionSolvesAsync);
+        group.MapPost("/sessions/syncFull", SyncAllSessionsAsync)
+            .Produces<List<SessionSyncDTO>>()
+            .ProducesProblem(StatusCodes.Status401Unauthorized);
+        
+        group.MapPost("/sessions/{sessionId:guid}/solves", SyncSessionSolvesAsync)
+            .Produces<SolveSyncResponse>()
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden);
     }
 
     private static async Task<IResult> SyncAllSessionsAsync(List<SessionSyncDTO> localSessions, 

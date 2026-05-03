@@ -12,8 +12,13 @@ public static class AuthEndpoints
     {
         var group = app.MapGroup("/api/auth");
 
-        group.MapPost("/register", Register);
-        group.MapPost("/login", Login);
+        group.MapPost("/register", Register)
+            .Produces(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest);;
+        
+        group.MapPost("/login", Login)
+            .Produces<LoginResponseDTO>() 
+            .ProducesProblem(StatusCodes.Status401Unauthorized);;
     }
 
     
@@ -31,7 +36,7 @@ public static class AuthEndpoints
 
         db.Users.Add(user);
         await db.SaveChangesAsync();
-        return Results.Ok(new { Message = "Success" });
+        return Results.Ok();
     }
 
     private static async Task<IResult> Login(UserLoginDTO request, ApiDbContext db, IConfiguration config)
