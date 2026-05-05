@@ -32,7 +32,7 @@ public class Solve
     /// <summary>
     /// When the puzzleSolve was made
     /// </summary>
-    public DateTime DateTime { get; set; }
+    public DateTime CreatedAt { get; set; }
     
     /// <summary>
     /// Text annotations by user

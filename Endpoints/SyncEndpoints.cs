@@ -2,6 +2,8 @@ using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
 using PandaCubeTimer_API.Data;
 using PandaCubeTimer_API.Models;
+using PandaCubeTimer_API.Models.Requests;
+using PandaCubeTimer_API.Models.Responses;
 
 namespace PandaCubeTimer_API.Endpoints;
 
@@ -10,150 +12,104 @@ public static class SyncEndpoints
     public static void MapSyncEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/api/sync").RequireAuthorization();
-
-        group.MapPost("/sessions/syncFull", SyncAllSessionsAsync)
-            .Produces<List<SessionSyncDTO>>()
-            .ProducesProblem(StatusCodes.Status401Unauthorized);
         
-        group.MapPost("/sessions/{sessionId:guid}/solves", SyncSessionSolvesAsync)
-            .Produces<SolveSyncResponse>()
+        group.MapPost("/completeTimerSync", CompleteTimerSyncAsync)
+            .Produces<CompleteTimerSyncResponse>()
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden);
     }
 
-    private static async Task<IResult> SyncAllSessionsAsync(List<SessionSyncDTO> localSessions, 
-        ApiDbContext db, ClaimsPrincipal user)
+
+    private static async Task<IResult> CompleteTimerSyncAsync(CompleteTimerSyncRequest request, ApiDbContext db, ClaimsPrincipal user)
     {
         var userId = Guid.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        var response = new CompleteTimerSyncResponse() { ServerTimeUtc = DateTime.UtcNow };
 
-        // 1. Загружаем все сессии этого юзера из базы сервера
-        var serverSessions = await db.Sessions
-            .Where(s => s.UserId == userId)
-            .ToListAsync();
+        // ==========================================
+        // 1. PROCESS INCOMING SESSIONS (From Mobile)
+        // ==========================================
+        if (request.UnsyncedSessions.Any())
+        {
+            var incomingIds = request.UnsyncedSessions.Select(s => s.Id).ToList();
+            var existingSessions = await db.Sessions.Where(s => incomingIds.Contains(s.Id) && s.UserId == userId).ToDictionaryAsync(s => s.Id);
 
-        // 2. Ищем сессии, которые пришли с телефона, но которых еще нет на сервере
-        var serverSessionIds = serverSessions.Select(s => s.Id).ToHashSet();
-        
-        var newSessionsToInsert = localSessions
-            .Where(ls => !serverSessionIds.Contains(ls.Id))
-            .Select(ls => new Session
+            foreach (var incoming in request.UnsyncedSessions)
             {
-                Id = ls.Id,
-                UserId = userId,
-                Name = ls.Name,
-                DisciplineId = ls.DisciplineId,
-                IsDeleted = ls.IsDeleted,
-                UpdatedAt = DateTime.UtcNow
-            })
-            .ToList();
-
-        // Если нашли новые — сохраняем их в базу
-        if (newSessionsToInsert.Any())
-        {
-            db.Sessions.AddRange(newSessionsToInsert);
-            await db.SaveChangesAsync();
-            
-            // Добавляем их в наш локальный список, чтобы сразу вернуть пользователю
-            serverSessions.AddRange(newSessionsToInsert);
-        }
-
-        // 3. Формируем финальный список ВСЕХ сессий (и старых серверных, и только что добавленных локальных)
-        var finalSyncList = serverSessions.Select(s => new SessionSyncDTO(
-            s.Id,
-            s.Name,
-            s.DisciplineId,
-            s.IsDeleted
-        )).ToList();
-
-        // 4. Отдаем телефону
-        return Results.Ok(finalSyncList);
-    }
-
-    public static async Task<IResult> SyncSessionSolvesAsync(
-        Guid sessionId, 
-        SolveSyncRequest request, 
-        ApiDbContext db, 
-        ClaimsPrincipal user)
-    {
-        var userId = Guid.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
-
-        // 1. Security Check: Does this session belong to this user?
-        var ownsSession = await db.Sessions.AnyAsync(s => s.Id == sessionId && s.UserId == userId);
-        if (!ownsSession)
-        {
-            return Results.Forbid(); // 403 Forbidden
-        }
-
-        // 2. Process changes coming from the mobile app (Upsert logic)
-        if (request.ClientChanges.Any())
-        {
-            var incomingIds = request.ClientChanges.Select(c => c.Id).ToList();
-            
-            // Fetch existing solves from DB to compare
-            var existingSolves = await db.Solves
-                .Where(s => incomingIds.Contains(s.Id))
-                .ToDictionaryAsync(s => s.Id);
-
-            foreach (var incoming in request.ClientChanges)
-            {
-                if (existingSolves.TryGetValue(incoming.Id, out var existingSolve))
+                if (existingSessions.TryGetValue(incoming.Id, out var existing))
                 {
-                    // Conflict resolution: update ONLY if phone's version is newer
-                    if (incoming.UpdatedAt > existingSolve.UpdatedAt)
+                    // Conflict resolution: Only update if the phone's edit is newer
+                    if (incoming.UpdatedAt > existing.UpdatedAt)
                     {
-                        existingSolve.SolveTimeSeconds = incoming.SolveTimeSeconds;
-                        existingSolve.IsPlusTwo = incoming.IsPlusTwo;
-                        existingSolve.IsDNF = incoming.IsDNF;
-                        existingSolve.Scramble = incoming.Scramble;
-                        existingSolve.DateTime = incoming.DateTime;
-                        existingSolve.Comment = incoming.Comment;
-                        existingSolve.IsDeleted = incoming.IsDeleted;
-                        existingSolve.UpdatedAt = incoming.UpdatedAt;
+                        existing.Name = incoming.Name;
+                        existing.IsDeleted = incoming.IsDeleted;
+                        existing.DisciplineId = incoming.DisciplineId;
+                        existing.UpdatedAt = incoming.UpdatedAt;
+                        response.AcknowledgedSessionIds.Add(incoming.Id);
                     }
                 }
                 else
                 {
-                    // It's a completely new solve made offline
-                    db.Solves.Add(new Solve
-                    {
-                        Id = incoming.Id,
-                        SessionId = sessionId, // Force assign to the URL session
-                        SolveTimeSeconds = incoming.SolveTimeSeconds,
-                        IsPlusTwo = incoming.IsPlusTwo,
-                        IsDNF = incoming.IsDNF,
-                        Scramble = incoming.Scramble,
-                        DateTime = incoming.DateTime,
-                        Comment = incoming.Comment,
-                        IsDeleted = incoming.IsDeleted,
-                        UpdatedAt = incoming.UpdatedAt
-                    });
+                    // Insert new
+                    db.Sessions.Add(new Session { Id = incoming.Id, UserId = userId, Name = incoming.Name, DisciplineId = incoming.DisciplineId, IsDeleted = incoming.IsDeleted, CreatedAt = incoming.CreatedAt, UpdatedAt = incoming.UpdatedAt });
+                    response.AcknowledgedSessionIds.Add(incoming.Id);
                 }
             }
-            
             await db.SaveChangesAsync();
         }
 
-        // 3. Find changes on the server that the phone doesn't know about yet
-        // (e.g. solves uploaded from your iPad yesterday)
-        var serverChanges = await db.Solves
-            .Where(s => s.SessionId == sessionId && s.UpdatedAt > request.LastSyncTimeUtc)
-            .Select(s => new SolveDTO(
-                s.Id,
-                s.SolveTimeSeconds,
-                s.IsPlusTwo,
-                s.IsDNF,
-                s.Scramble,
-                s.DateTime,
-                s.Comment,
-                s.IsDeleted,
-                s.UpdatedAt
-            ))
+        // ==========================================
+        // 2. PROCESS INCOMING SOLVES (From Mobile)
+        // ==========================================
+        if (request.UnsyncedSolves.Any())
+        {
+            var incomingIds = request.UnsyncedSolves.Select(s => s.Id).ToList();
+            // Security: Ensure we only touch solves linked to the user's sessions
+            var userSessionIds = await db.Sessions.Where(s => s.UserId == userId).Select(s => s.Id).ToListAsync();
+            var existingSolves = await db.Solves.Where(s => incomingIds.Contains(s.Id)).ToDictionaryAsync(s => s.Id);
+
+            foreach (var incoming in request.UnsyncedSolves)
+            {
+                if (!userSessionIds.Contains(incoming.SessionId)) continue; // Skip if session doesn't belong to user
+
+                if (existingSolves.TryGetValue(incoming.Id, out var existing))
+                {
+                    if (incoming.UpdatedAt > existing.UpdatedAt)
+                    {
+                        existing.SolveTimeSeconds = incoming.SolveTimeSeconds;
+                        existing.IsDeleted = incoming.IsDeleted;
+                        existing.UpdatedAt = incoming.UpdatedAt;
+                        existing.Comment = incoming.Comment;
+                        existing.IsDNF = incoming.IsDNF;
+                        existing.IsPlusTwo = incoming.IsPlusTwo;
+                        response.AcknowledgedSolveIds.Add(incoming.Id);
+                    }
+                }
+                else
+                {
+                    db.Solves.Add(new Solve { Id = incoming.Id, SessionId = incoming.SessionId, SolveTimeSeconds = incoming.SolveTimeSeconds, IsPlusTwo = incoming.IsPlusTwo, IsDNF = incoming.IsDNF, Scramble = incoming.Scramble, CreatedAt = incoming.CreatedAt, Comment = incoming.Comment, IsDeleted = incoming.IsDeleted, UpdatedAt = incoming.UpdatedAt });
+                    response.AcknowledgedSolveIds.Add(incoming.Id);
+                }
+            }
+            await db.SaveChangesAsync();
+        }
+
+        // ==========================================
+        // 3. FETCH NEW SERVER DATA FOR MOBILE
+        // ==========================================
+        var userSessions = await db.Sessions.Where(s => s.UserId == userId).ToListAsync();
+        var validSessionIds = userSessions.Select(s => s.Id).ToList();
+
+        // Grab everything changed on the server AFTER the mobile's last sync
+        response.ServerSessions = userSessions
+            .Where(s => s.UpdatedAt > request.LastSyncTimeUtc)
+            .Select(s => new SessionDTO { Id = s.Id, Name = s.Name, IsDeleted = s.IsDeleted, UpdatedAt = s.UpdatedAt })
+            .ToList();
+
+        response.ServerSolves = await db.Solves
+            .Where(s => validSessionIds.Contains(s.SessionId) && s.UpdatedAt > request.LastSyncTimeUtc)
+            .Select(s => new SolveDTO { Id = s.Id, SessionId = s.SessionId, SolveTimeSeconds = s.SolveTimeSeconds, IsPlusTwo = s.IsPlusTwo, IsDNF = s.IsDNF, Scramble = s.Scramble, CreatedAt = s.CreatedAt, Comment = s.Comment, IsDeleted = s.IsDeleted, UpdatedAt = s.UpdatedAt })
             .ToListAsync();
 
-        // 4. Return new sync time and server changes
-        return Results.Ok(new SolveSyncResponse(
-            ServerTimeUtc: DateTime.UtcNow,
-            ServerChanges: serverChanges
-        ));
+        return Results.Ok(response);
     }
 }
