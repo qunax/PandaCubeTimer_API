@@ -127,8 +127,10 @@ public static class SyncEndpoints
             {
                 Id = s.Id, 
                 Name = s.Name, 
+                DisciplineId = s.DisciplineId,
                 IsDeleted = s.IsDeleted, 
-                UpdatedAt = s.UpdatedAt
+                UpdatedAt = s.UpdatedAt,
+                CreatedAt = s.CreatedAt
             })
             .ToList();
 
