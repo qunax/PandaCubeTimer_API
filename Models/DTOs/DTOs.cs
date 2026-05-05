@@ -17,8 +17,8 @@ public class SessionDTO
     public string Name { get; set; }
     public string DisciplineId { get; set; }
     public bool IsDeleted { get; set; }
-    public DateTime CreatedAt { get; set; }
-    public DateTime UpdatedAt { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
 }
 
 public class SolveDTO
@@ -29,8 +29,8 @@ public class SolveDTO
     public bool IsPlusTwo { get; set; }
     public bool IsDNF { get; set; }
     public string Scramble { get; set; }
-    public DateTime CreatedAt { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
     public string? Comment { get; set; }
     public bool IsDeleted { get; set; }
-    public DateTime UpdatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
 }

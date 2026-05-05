@@ -43,14 +43,23 @@ public static class SyncEndpoints
                         existing.Name = incoming.Name;
                         existing.IsDeleted = incoming.IsDeleted;
                         existing.DisciplineId = incoming.DisciplineId;
-                        existing.UpdatedAt = incoming.UpdatedAt;
+                        existing.UpdatedAt = incoming.UpdatedAt.UtcDateTime;
                         response.AcknowledgedSessionIds.Add(incoming.Id);
                     }
                 }
                 else
                 {
                     // Insert new
-                    db.Sessions.Add(new Session { Id = incoming.Id, UserId = userId, Name = incoming.Name, DisciplineId = incoming.DisciplineId, IsDeleted = incoming.IsDeleted, CreatedAt = incoming.CreatedAt, UpdatedAt = incoming.UpdatedAt });
+                    db.Sessions.Add(new Session
+                    {
+                        Id = incoming.Id, 
+                        UserId = userId, 
+                        Name = incoming.Name, 
+                        DisciplineId = incoming.DisciplineId,
+                        IsDeleted = incoming.IsDeleted, 
+                        CreatedAt = incoming.CreatedAt.UtcDateTime,
+                        UpdatedAt = incoming.UpdatedAt.UtcDateTime,
+                    });
                     response.AcknowledgedSessionIds.Add(incoming.Id);
                 }
             }
@@ -77,7 +86,7 @@ public static class SyncEndpoints
                     {
                         existing.SolveTimeSeconds = incoming.SolveTimeSeconds;
                         existing.IsDeleted = incoming.IsDeleted;
-                        existing.UpdatedAt = incoming.UpdatedAt;
+                        existing.UpdatedAt = incoming.UpdatedAt.UtcDateTime;
                         existing.Comment = incoming.Comment;
                         existing.IsDNF = incoming.IsDNF;
                         existing.IsPlusTwo = incoming.IsPlusTwo;
@@ -86,7 +95,19 @@ public static class SyncEndpoints
                 }
                 else
                 {
-                    db.Solves.Add(new Solve { Id = incoming.Id, SessionId = incoming.SessionId, SolveTimeSeconds = incoming.SolveTimeSeconds, IsPlusTwo = incoming.IsPlusTwo, IsDNF = incoming.IsDNF, Scramble = incoming.Scramble, CreatedAt = incoming.CreatedAt, Comment = incoming.Comment, IsDeleted = incoming.IsDeleted, UpdatedAt = incoming.UpdatedAt });
+                    db.Solves.Add(new Solve
+                    {
+                        Id = incoming.Id, 
+                        SessionId = incoming.SessionId, 
+                        SolveTimeSeconds = incoming.SolveTimeSeconds, 
+                        IsPlusTwo = incoming.IsPlusTwo, 
+                        IsDNF = incoming.IsDNF, 
+                        Scramble = incoming.Scramble, 
+                        CreatedAt = incoming.CreatedAt.UtcDateTime, 
+                        Comment = incoming.Comment, 
+                        IsDeleted = incoming.IsDeleted, 
+                        UpdatedAt = incoming.UpdatedAt.UtcDateTime,
+                    });
                     response.AcknowledgedSolveIds.Add(incoming.Id);
                 }
             }
@@ -101,13 +122,31 @@ public static class SyncEndpoints
 
         // Grab everything changed on the server AFTER the mobile's last sync
         response.ServerSessions = userSessions
-            .Where(s => s.UpdatedAt > request.LastSyncTimeUtc)
-            .Select(s => new SessionDTO { Id = s.Id, Name = s.Name, IsDeleted = s.IsDeleted, UpdatedAt = s.UpdatedAt })
+            .Where(s => s.UpdatedAt > request.LastSyncTimeUtc.UtcDateTime)
+            .Select(s => new SessionDTO
+            {
+                Id = s.Id, 
+                Name = s.Name, 
+                IsDeleted = s.IsDeleted, 
+                UpdatedAt = s.UpdatedAt
+            })
             .ToList();
 
         response.ServerSolves = await db.Solves
-            .Where(s => validSessionIds.Contains(s.SessionId) && s.UpdatedAt > request.LastSyncTimeUtc)
-            .Select(s => new SolveDTO { Id = s.Id, SessionId = s.SessionId, SolveTimeSeconds = s.SolveTimeSeconds, IsPlusTwo = s.IsPlusTwo, IsDNF = s.IsDNF, Scramble = s.Scramble, CreatedAt = s.CreatedAt, Comment = s.Comment, IsDeleted = s.IsDeleted, UpdatedAt = s.UpdatedAt })
+            .Where(s => validSessionIds.Contains(s.SessionId) && s.UpdatedAt > request.LastSyncTimeUtc.UtcDateTime)
+            .Select(s => new SolveDTO
+            {
+                Id = s.Id,
+                SessionId = s.SessionId, 
+                SolveTimeSeconds = s.SolveTimeSeconds,
+                IsPlusTwo = s.IsPlusTwo, 
+                IsDNF = s.IsDNF, 
+                Scramble = s.Scramble,
+                CreatedAt = s.CreatedAt, 
+                Comment = s.Comment, 
+                IsDeleted = s.IsDeleted, 
+                UpdatedAt = s.UpdatedAt
+            })
             .ToListAsync();
 
         return Results.Ok(response);
